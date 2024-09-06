@@ -808,6 +808,10 @@ def _get_amplitudes_by_units(sorting_analyzer, unit_ids, peak_sign):
             amplitudes_by_units[unit_id] = all_amplitudes[spike_mask]
 
     elif sorting_analyzer.has_extension("waveforms"):
+        print("“spike_amplitude” extension is not available, "
+        "the amplitudes are extracted from the SortingAnalyzer, "
+        "which usually has waveforms for a small subset of spikes (500 by default). ")
+        
         waveforms_ext = sorting_analyzer.get_extension("waveforms")
         before = waveforms_ext.nbefore
         extremum_channels_ids = get_template_extremum_channel(sorting_analyzer, peak_sign=peak_sign)
