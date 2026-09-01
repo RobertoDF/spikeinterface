@@ -183,9 +183,7 @@ class ComputeQualityMetrics(BaseMetricExtension):
             if sorting_analyzer.is_sparse():
                 neighbor_channel_ids = sorting_analyzer.sparsity.unit_id_to_channel_ids[unit_id]
                 neighbor_unit_ids = [
-                    other_unit
-                    for other_unit in context_unit_ids
-                    if main_channels[other_unit] in neighbor_channel_ids
+                    other_unit for other_unit in context_unit_ids if main_channels[other_unit] in neighbor_channel_ids
                 ]
                 neighbor_channel_indices = sorting_analyzer.channel_ids_to_indices(neighbor_channel_ids)
             else:

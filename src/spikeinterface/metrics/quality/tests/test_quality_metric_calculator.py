@@ -89,9 +89,7 @@ def test_merging_quality_metrics(sorting_analyzer_simple):
     # sorting_analyzer_simple has ten units
     with warnings.catch_warnings():
         warnings.filterwarnings("error", message="No other units found in the vicinity")
-        new_sorting_analyzer, new_unit_ids = sorting_analyzer.merge_units(
-            [["0", "1"]], return_new_unit_ids=True
-        )
+        new_sorting_analyzer, new_unit_ids = sorting_analyzer.merge_units([["0", "1"]], return_new_unit_ids=True)
     new_metrics = new_sorting_analyzer.get_extension("quality_metrics").get_data()
 
     # we should copy over the metrics after merge
