@@ -18,6 +18,7 @@ from .splitunitsorting import SplitUnitSorting, split_unit_sorting
 from .curation_format import validate_curation_dict, curation_label_to_dataframe, apply_curation, load_curation
 
 from .sortingview_curation import apply_sortingview_curation
+from .phy_curation import curation_from_phy
 
 # automated curation
 from .curation_tools import get_labeling_summary
