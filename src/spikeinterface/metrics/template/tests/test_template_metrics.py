@@ -94,6 +94,27 @@ def test_metric_names_in_same_order(small_sorting_analyzer):
         assert specified_name == column
 
 
+def test_repeated_soft_merge_without_legacy_tmp_data(small_sorting_analyzer):
+    small_sorting_analyzer.compute("template_metrics")
+    template_metrics_extension = small_sorting_analyzer.get_extension("template_metrics")
+    template_metrics_extension.data.pop("peaks_data")
+    template_metrics_extension.data.pop("main_channel_templates")
+    template_metrics_extension.tmp_data_to_save = []
+
+    unit_ids = small_sorting_analyzer.unit_ids
+    first_merged_analyzer, first_merged_unit_ids = small_sorting_analyzer.merge_units(
+        [[unit_ids[0], unit_ids[1]]],
+        merging_mode="soft",
+        return_new_unit_ids=True,
+    )
+    second_merged_analyzer = first_merged_analyzer.merge_units(
+        [[first_merged_unit_ids[0], unit_ids[2]]],
+        merging_mode="soft",
+    )
+
+    assert second_merged_analyzer.has_extension("template_metrics")
+
+
 def test_save_template_metrics(small_sorting_analyzer, create_cache_folder):
     """
     Computes template metrics in binary folder format. Then computes subsets of template
