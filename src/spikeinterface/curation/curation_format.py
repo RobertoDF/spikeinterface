@@ -216,7 +216,7 @@ def apply_curation(
                 sparsity_overlap=sparsity_overlap,
                 raise_error_if_overlap_fails=raise_error_if_overlap_fails,
                 verbose=verbose,
-                job_kwargs=job_kwargs,
+                **job_kwargs,
             )
         return sorting_or_analyzer
 
@@ -291,6 +291,7 @@ def apply_curation(
                 new_unit_ids=split_new_unit_ids,
                 format="memory",
                 verbose=verbose,
+                **job_kwargs,
             )
 
     return curated_sorting_or_analyzer
