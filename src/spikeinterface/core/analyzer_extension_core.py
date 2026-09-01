@@ -1411,7 +1411,10 @@ class BaseMetricExtension(AnalyzerExtension):
         new_data["metrics"] = self._cast_metrics(metrics)
 
         if self.tmp_data_to_save is not None:
+            available_tmp_data = self.data.keys() & new_tmp_data.keys()
             for k in self.tmp_data_to_save:
+                if k not in available_tmp_data:
+                    continue
                 new_arr = _update_data_after_merge_or_split(
                     self.sorting_analyzer, new_sorting_analyzer, self.data[k], new_tmp_data[k], new_unit_ids
                 )
@@ -1459,7 +1462,10 @@ class BaseMetricExtension(AnalyzerExtension):
         new_data["metrics"] = self._cast_metrics(metrics)
 
         if self.tmp_data_to_save is not None:
+            available_tmp_data = self.data.keys() & new_tmp_data.keys()
             for k in self.tmp_data_to_save:
+                if k not in available_tmp_data:
+                    continue
                 new_arr = _update_data_after_merge_or_split(
                     self.sorting_analyzer, new_sorting_analyzer, self.data[k], new_tmp_data[k], new_unit_ids_f
                 )
