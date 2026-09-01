@@ -32,6 +32,29 @@ def test_curation_from_phy_merge(tmp_path):
     np.testing.assert_array_equal(curated_sorting.get_unit_spike_train(2), [50, 60])
 
 
+def test_curation_from_phy_realigns_simultaneous_spikes(tmp_path):
+    sorting = NumpySorting.from_unit_dict(
+        {
+            0: np.array([10, 20]),
+            1: np.array([10, 30]),
+        },
+        sampling_frequency=30_000,
+    )
+    spikes = sorting.to_spike_vector()
+    phy_spike_order = np.array([1, 0, 2, 3])
+    np.save(tmp_path / "spike_times.npy", spikes["sample_index"][phy_spike_order])
+    np.save(tmp_path / "spike_templates.npy", spikes["unit_index"][phy_spike_order])
+    np.save(tmp_path / "spike_clusters.npy", spikes["unit_index"][phy_spike_order])
+
+    curation = curation_from_phy(sorting, tmp_path)
+    curated_sorting = apply_curation(sorting, curation)
+
+    assert len(curation.splits) == 0
+    assert len(curation.merges) == 0
+    np.testing.assert_array_equal(curated_sorting.get_unit_spike_train(0), [10, 20])
+    np.testing.assert_array_equal(curated_sorting.get_unit_spike_train(1), [10, 30])
+
+
 def test_curation_from_phy_split_then_merge(tmp_path):
     sorting = NumpySorting.from_unit_dict(
         {

@@ -65,9 +65,15 @@ def curation_from_phy(
     spike_times_match = spikes.size == phy_spike_times.size and np.array_equal(spikes["sample_index"], phy_spike_times)
     if not spike_times_match:
         raise ValueError(
-            "The sorting spike vector does not match Phy's original spike times and ordering. "
+            "The sorting spike vector does not match Phy's original spike times. "
             "Pass the exact sorting that was originally opened in Phy."
         )
+    phy_cluster_ids = _reorder_phy_clusters_to_match_sorting(
+        spikes,
+        phy_spike_times,
+        phy_cluster_ids,
+        phy_folder,
+    )
 
     unit_ids = sorting.unit_ids.tolist()
     spike_indices = spike_vector_to_indices(
@@ -166,6 +172,39 @@ def curation_from_phy(
     if not splits:
         return merge_step
     return SequentialCuration(curation_steps=[split_step, merge_step])
+
+
+def _reorder_phy_clusters_to_match_sorting(spikes, phy_spike_times, phy_cluster_ids, phy_folder):
+    """Match Phy's cluster assignments to the spike order used by the sorting.
+
+    Phy can reorder simultaneous spikes while keeping ``spike_times.npy``
+    unchanged. ``spike_templates.npy`` contains the original unit index for
+    each spike, which makes those simultaneous spikes distinguishable.
+    """
+    spike_templates_path = phy_folder / "spike_templates.npy"
+    if not spike_templates_path.is_file():
+        return phy_cluster_ids
+
+    phy_original_unit_indices = np.load(spike_templates_path, mmap_mode="r").reshape(-1)
+    if phy_original_unit_indices.size != phy_spike_times.size:
+        raise ValueError("Phy spike_times.npy and spike_templates.npy have different numbers of spikes")
+
+    sorting_original_unit_indices = spikes["unit_index"]
+    if np.array_equal(sorting_original_unit_indices, phy_original_unit_indices):
+        return phy_cluster_ids
+
+    sorting_canonical_order = np.lexsort((sorting_original_unit_indices, spikes["sample_index"]))
+    phy_canonical_order = np.lexsort((phy_original_unit_indices, phy_spike_times))
+    original_units_match = np.array_equal(
+        sorting_original_unit_indices[sorting_canonical_order],
+        phy_original_unit_indices[phy_canonical_order],
+    )
+    if not original_units_match:
+        return phy_cluster_ids
+
+    reordered_cluster_ids = np.empty_like(phy_cluster_ids)
+    reordered_cluster_ids[sorting_canonical_order] = phy_cluster_ids[phy_canonical_order]
+    return reordered_cluster_ids
 
 
 def _group_indices_by_cluster(cluster_ids):
