@@ -193,28 +193,34 @@ def _reorder_phy_clusters_to_match_sorting(spikes, phy_spike_times, phy_cluster_
 
     Phy can reorder simultaneous spikes while keeping ``spike_times.npy``
     unchanged. ``spike_templates.npy`` contains the original unit index for
-    each spike, which makes those simultaneous spikes distinguishable.
+    each spike, which makes those simultaneous spikes distinguishable. When
+    that file is absent the existing cluster order is returned unchanged.
     """
     sorting_original_unit_indices = spikes["unit_index"]
     spike_templates_path = phy_folder / "spike_templates.npy"
-    if spike_templates_path.is_file():
-        phy_original_unit_indices = np.load(spike_templates_path, mmap_mode="r").reshape(-1)
-        if phy_original_unit_indices.size != phy_spike_times.size:
-            raise ValueError("Phy spike_times.npy and spike_templates.npy have different numbers of spikes")
+    if not spike_templates_path.is_file():
+        # Without template identity there is nothing to disambiguate simultaneous spikes
+        # with, so the order already present in spike_clusters.npy is authoritative.
+        # Callers that omit the file have resolved the spike order themselves.
+        return phy_cluster_ids
 
-        if np.array_equal(sorting_original_unit_indices, phy_original_unit_indices):
-            return phy_cluster_ids
+    phy_original_unit_indices = np.load(spike_templates_path, mmap_mode="r").reshape(-1)
+    if phy_original_unit_indices.size != phy_spike_times.size:
+        raise ValueError("Phy spike_times.npy and spike_templates.npy have different numbers of spikes")
 
-        sorting_canonical_order = np.lexsort((sorting_original_unit_indices, spikes["sample_index"]))
-        phy_canonical_order = np.lexsort((phy_original_unit_indices, phy_spike_times))
-        original_units_match = np.array_equal(
-            sorting_original_unit_indices[sorting_canonical_order],
-            phy_original_unit_indices[phy_canonical_order],
-        )
-        if original_units_match:
-            reordered_cluster_ids = np.empty_like(phy_cluster_ids)
-            reordered_cluster_ids[sorting_canonical_order] = phy_cluster_ids[phy_canonical_order]
-            return reordered_cluster_ids
+    if np.array_equal(sorting_original_unit_indices, phy_original_unit_indices):
+        return phy_cluster_ids
+
+    sorting_canonical_order = np.lexsort((sorting_original_unit_indices, spikes["sample_index"]))
+    phy_canonical_order = np.lexsort((phy_original_unit_indices, phy_spike_times))
+    original_units_match = np.array_equal(
+        sorting_original_unit_indices[sorting_canonical_order],
+        phy_original_unit_indices[phy_canonical_order],
+    )
+    if original_units_match:
+        reordered_cluster_ids = np.empty_like(phy_cluster_ids)
+        reordered_cluster_ids[sorting_canonical_order] = phy_cluster_ids[phy_canonical_order]
+        return reordered_cluster_ids
 
     return _align_simultaneous_spike_clusters(
         sorting_original_unit_indices,
