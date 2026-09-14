@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from spikeinterface.core import BaseSorting, SortingAnalyzer
 from spikeinterface.core.sorting_tools import spike_vector_to_indices
@@ -98,7 +99,20 @@ def curation_from_phy(
             final_cluster_sources.setdefault(final_cluster_id, []).append(unit_id)
         source_partitions[unit_id] = partitions
 
-    id_allocator = _UnitIdAllocator(unit_ids, final_cluster_sources)
+    reusable_unit_ids = {
+        unit_id
+        for unit_id, partitions in source_partitions.items()
+        if (
+            len(partitions) != 1
+            and unit_id in final_cluster_sources
+            and len(final_cluster_sources[unit_id]) > 1
+        )
+    }
+    id_allocator = _UnitIdAllocator(
+        unit_ids,
+        final_cluster_sources,
+        reusable_unit_ids=reusable_unit_ids,
+    )
     final_unit_ids = {}
     for final_cluster_id, source_unit_ids in final_cluster_sources.items():
         source_unit_id = source_unit_ids[0]
@@ -181,29 +195,91 @@ def _reorder_phy_clusters_to_match_sorting(spikes, phy_spike_times, phy_cluster_
     unchanged. ``spike_templates.npy`` contains the original unit index for
     each spike, which makes those simultaneous spikes distinguishable.
     """
-    spike_templates_path = phy_folder / "spike_templates.npy"
-    if not spike_templates_path.is_file():
-        return phy_cluster_ids
-
-    phy_original_unit_indices = np.load(spike_templates_path, mmap_mode="r").reshape(-1)
-    if phy_original_unit_indices.size != phy_spike_times.size:
-        raise ValueError("Phy spike_times.npy and spike_templates.npy have different numbers of spikes")
-
     sorting_original_unit_indices = spikes["unit_index"]
-    if np.array_equal(sorting_original_unit_indices, phy_original_unit_indices):
-        return phy_cluster_ids
+    spike_templates_path = phy_folder / "spike_templates.npy"
+    if spike_templates_path.is_file():
+        phy_original_unit_indices = np.load(spike_templates_path, mmap_mode="r").reshape(-1)
+        if phy_original_unit_indices.size != phy_spike_times.size:
+            raise ValueError("Phy spike_times.npy and spike_templates.npy have different numbers of spikes")
 
-    sorting_canonical_order = np.lexsort((sorting_original_unit_indices, spikes["sample_index"]))
-    phy_canonical_order = np.lexsort((phy_original_unit_indices, phy_spike_times))
-    original_units_match = np.array_equal(
-        sorting_original_unit_indices[sorting_canonical_order],
-        phy_original_unit_indices[phy_canonical_order],
+        if np.array_equal(sorting_original_unit_indices, phy_original_unit_indices):
+            return phy_cluster_ids
+
+        sorting_canonical_order = np.lexsort((sorting_original_unit_indices, spikes["sample_index"]))
+        phy_canonical_order = np.lexsort((phy_original_unit_indices, phy_spike_times))
+        original_units_match = np.array_equal(
+            sorting_original_unit_indices[sorting_canonical_order],
+            phy_original_unit_indices[phy_canonical_order],
+        )
+        if original_units_match:
+            reordered_cluster_ids = np.empty_like(phy_cluster_ids)
+            reordered_cluster_ids[sorting_canonical_order] = phy_cluster_ids[phy_canonical_order]
+            return reordered_cluster_ids
+
+    return _align_simultaneous_spike_clusters(
+        sorting_original_unit_indices,
+        phy_spike_times,
+        phy_cluster_ids,
     )
-    if not original_units_match:
+
+
+def _align_simultaneous_spike_clusters(sorting_unit_indices, spike_times, phy_cluster_ids):
+    """Resolve tied spike order from assignments at unambiguous timestamps."""
+    group_starts = np.flatnonzero(np.r_[True, spike_times[1:] != spike_times[:-1]])
+    group_sizes = np.diff(np.r_[group_starts, spike_times.size])
+    if np.all(group_sizes == 1):
         return phy_cluster_ids
 
-    reordered_cluster_ids = np.empty_like(phy_cluster_ids)
-    reordered_cluster_ids[sorting_canonical_order] = phy_cluster_ids[phy_canonical_order]
+    unique_cluster_ids = np.unique(phy_cluster_ids)
+    singleton_indices = group_starts[group_sizes == 1]
+    compatibility = np.zeros(
+        (int(sorting_unit_indices.max()) + 1, unique_cluster_ids.size),
+        dtype=np.int64,
+    )
+    singleton_cluster_indices = np.searchsorted(
+        unique_cluster_ids,
+        phy_cluster_ids[singleton_indices],
+    )
+    np.add.at(
+        compatibility,
+        (sorting_unit_indices[singleton_indices], singleton_cluster_indices),
+        1,
+    )
+
+    reordered_cluster_ids = np.array(phy_cluster_ids, copy=True)
+
+    pair_starts = group_starts[group_sizes == 2]
+    if pair_starts.size:
+        first_sources = sorting_unit_indices[pair_starts]
+        second_sources = sorting_unit_indices[pair_starts + 1]
+        first_clusters = np.searchsorted(unique_cluster_ids, phy_cluster_ids[pair_starts])
+        second_clusters = np.searchsorted(unique_cluster_ids, phy_cluster_ids[pair_starts + 1])
+        direct_scores = (
+            compatibility[first_sources, first_clusters]
+            + compatibility[second_sources, second_clusters]
+        )
+        swapped_scores = (
+            compatibility[first_sources, second_clusters]
+            + compatibility[second_sources, first_clusters]
+        )
+        swap_starts = pair_starts[swapped_scores > direct_scores]
+        reordered_cluster_ids[swap_starts] = phy_cluster_ids[swap_starts + 1]
+        reordered_cluster_ids[swap_starts + 1] = phy_cluster_ids[swap_starts]
+
+    for group_start, group_size in zip(
+        group_starts[group_sizes > 2],
+        group_sizes[group_sizes > 2],
+    ):
+        group_slice = slice(group_start, group_start + group_size)
+        source_indices = sorting_unit_indices[group_slice]
+        cluster_indices = np.searchsorted(
+            unique_cluster_ids,
+            phy_cluster_ids[group_slice],
+        )
+        scores = compatibility[source_indices[:, np.newaxis], cluster_indices]
+        source_order, phy_order = linear_sum_assignment(scores, maximize=True)
+        reordered_cluster_ids[group_start + source_order] = phy_cluster_ids[group_start + phy_order]
+
     return reordered_cluster_ids
 
 
@@ -218,9 +294,9 @@ def _group_indices_by_cluster(cluster_ids):
 
 
 class _UnitIdAllocator:
-    def __init__(self, original_unit_ids, phy_cluster_ids):
+    def __init__(self, original_unit_ids, phy_cluster_ids, reusable_unit_ids=()):
         self._use_integers = all(isinstance(unit_id, int) for unit_id in original_unit_ids)
-        self._used = set(original_unit_ids)
+        self._used = set(original_unit_ids).difference(reusable_unit_ids)
         self._next = max([*original_unit_ids, *phy_cluster_ids], default=-1) + 1 if self._use_integers else 0
 
     def allocate(self, preferred=None):
