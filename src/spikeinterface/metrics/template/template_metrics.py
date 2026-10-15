@@ -335,7 +335,8 @@ class ComputeTemplateMetrics(BaseMetricExtension):
             index=unit_ids,
             data=peaks_info,
             columns=columns,
-            dtype=int,
+            # float so that missing extrema (None) are stored as NaN
+            dtype=float,
         )
 
         return tmp_data

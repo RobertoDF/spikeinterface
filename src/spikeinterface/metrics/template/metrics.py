@@ -40,14 +40,14 @@ def detect_peaks_on_templates(
     Returns
     -------
     peaks_info : dict
-        Dictionary containing information about detected peaks
+        Dictionary containing information about detected peaks. If the search window is empty or invalid
+        (e.g. the start or end index is None), "{extremum_name}_index" and the width bounds are None.
     """
     from scipy.signal import find_peaks
 
-    template_for_search = template[start_search_index:end_search_index]
-
     peaks_info = {}
-    if end_search_index > start_search_index and start_search_index > 0:
+    if start_search_index is not None and end_search_index is not None and 0 <= start_search_index < end_search_index:
+        template_for_search = template[start_search_index:end_search_index]
         locs_main, props_main = find_peaks(template_for_search, prominence=prominence, width=width)
         locs_main = locs_main + start_search_index
 
@@ -82,16 +82,22 @@ def detect_peaks_on_templates(
         peaks_info[f"{extremum_name}_widths"] = props_main.get("widths", np.full(len(locs_main), np.nan))
         peaks_info[f"{extremum_name}_index"] = locs[extremum_idx]
         peaks_info[f"{extremum_name}_width"] = props.get("widths", np.array([np.nan]))[extremum_idx]
-        peaks_info[f"{extremum_name}_width_left"] = int(np.round(props.get("left_ips", np.array([-1]))[extremum_idx]))
-        peaks_info[f"{extremum_name}_width_right"] = int(np.round(props.get("right_ips", np.array([-1]))[extremum_idx]))
+        left_ips = props.get("left_ips")
+        right_ips = props.get("right_ips")
+        peaks_info[f"{extremum_name}_width_left"] = (
+            int(np.round(left_ips[extremum_idx])) if left_ips is not None else None
+        )
+        peaks_info[f"{extremum_name}_width_right"] = (
+            int(np.round(right_ips[extremum_idx])) if right_ips is not None else None
+        )
     else:
         peaks_info[f"{extremum_name}_sample_indices"] = np.array([], dtype=int)
         peaks_info[f"{extremum_name}_prominences"] = np.array([], dtype=float)
         peaks_info[f"{extremum_name}_widths"] = np.array([], dtype=float)
-        peaks_info[f"{extremum_name}_index"] = -1
+        peaks_info[f"{extremum_name}_index"] = None
         peaks_info[f"{extremum_name}_width"] = np.nan
-        peaks_info[f"{extremum_name}_width_left"] = -1
-        peaks_info[f"{extremum_name}_width_right"] = -1
+        peaks_info[f"{extremum_name}_width_left"] = None
+        peaks_info[f"{extremum_name}_width_right"] = None
 
     return peaks_info
 
@@ -178,15 +184,22 @@ def get_trough_and_peak_idx(
     main_trough_sample_index = peaks_info_trough["trough_index"]
     peaks_info.update(peaks_info_trough)
 
-    # Prevents detecting spurious peaks right next to the trough
-    _, hw_l, hw_r = _compute_halfwidth(-template, main_trough_sample_index, sampling_frequency)
-    if hw_l >= 0 and hw_r >= 0:
-        trough_hw_samples = hw_r - hw_l
-        min_peak_trough_dist = max(
-            min_extremum_distance_samples, int(min_peak_trough_distance_ratio * trough_hw_samples)
-        )
+    # Without a trough there is no reference for the peak search windows, so no peaks are detected
+    if main_trough_sample_index is not None:
+        # Prevents detecting spurious peaks right next to the trough
+        _, hw_l, hw_r = _compute_halfwidth(-template, main_trough_sample_index, sampling_frequency)
+        if hw_l is not None and hw_r is not None:
+            trough_hw_samples = hw_r - hw_l
+            min_peak_trough_dist = max(
+                min_extremum_distance_samples, int(min_peak_trough_distance_ratio * trough_hw_samples)
+            )
+        else:
+            min_peak_trough_dist = min_extremum_distance_samples
+        peak_before_end_index = main_trough_sample_index - min_peak_trough_dist
+        peak_after_start_index = main_trough_sample_index + min_peak_trough_dist
     else:
-        min_peak_trough_dist = min_extremum_distance_samples
+        peak_before_end_index = None
+        peak_after_start_index = None
 
     # --- Find peaks before the main trough ---
     peaks_info_before = detect_peaks_on_templates(
@@ -194,7 +207,7 @@ def get_trough_and_peak_idx(
         extremum_name="peak_before",
         prominence=min_prominence,
         start_search_index=left_edge,
-        end_search_index=main_trough_sample_index - min_peak_trough_dist,
+        end_search_index=peak_before_end_index,
     )
     peaks_info.update(peaks_info_before)
 
@@ -203,7 +216,7 @@ def get_trough_and_peak_idx(
         template=template,
         extremum_name="peak_after",
         prominence=min_prominence,
-        start_search_index=main_trough_sample_index + min_peak_trough_dist,
+        start_search_index=peak_after_start_index,
         end_search_index=right_edge,
     )
     peaks_info.update(peaks_info_after)
@@ -475,16 +488,22 @@ def _compute_halfwidth(template, extremum_index, sampling_frequency):
     ----------
     template : numpy.ndarray
         The 1D template waveform
-    extremum_index: int
-        The index of the extremum
+    extremum_index: int | None
+        The index of the extremum. If None, NaN is returned.
     sampling_frequency : float
         The sampling frequency of the template
 
     Returns
     -------
     hw: float
-        The half width in seconds
+        The half width in seconds (NaN if it cannot be computed)
+    left: int | None
+        Sample index of the last half-amplitude crossing before the extremum
+    right: int | None
+        Sample index of the first half-amplitude crossing after the extremum
     """
+    if extremum_index is None:
+        return np.nan, None, None
     extremum_val = template[extremum_index]
     # threshold is half of peak height (assuming baseline is 0)
     threshold = 0.5 * extremum_val
@@ -495,7 +514,7 @@ def _compute_halfwidth(template, extremum_index, sampling_frequency):
     crossings_after_extremum = threshold_crossings[threshold_crossings >= extremum_index]
 
     if len(crossings_before_extremum) == 0 or len(crossings_after_extremum) == 0:
-        return np.nan, -1, -1
+        return np.nan, None, None
     else:
         last_crossing_before_extremum = crossings_before_extremum[-1]
         first_crossing_after_extremum = crossings_after_extremum[0]
