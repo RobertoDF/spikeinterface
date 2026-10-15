@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from spikeinterface.postprocessing.tests.common_extension_tests import AnalyzerExtensionCommonTestSuite
@@ -6,9 +7,54 @@ from spikeinterface.metrics.template import (
     compute_template_metrics,
     get_single_channel_template_metric_names,
 )
-from spikeinterface.metrics.template.metrics import single_channel_metrics, multi_channel_metrics
+from spikeinterface.metrics.template.metrics import (
+    single_channel_metrics,
+    multi_channel_metrics,
+    get_trough_and_peak_idx,
+    get_peak_to_trough_duration,
+    _compute_halfwidth,
+)
 
 template_metrics = get_single_channel_template_metric_names()
+
+
+def _gaussian(num_samples, center, amplitude, sigma=2.0):
+    x = np.arange(num_samples)
+    return amplitude * np.exp(-0.5 * ((x - center) / sigma) ** 2)
+
+
+def test_missing_peak_after_is_none():
+    """A trough at the right edge leaves no window for the peak after it: the index must be None, not -1."""
+    sampling_frequency = 30_000.0
+    num_samples = 100
+    template = _gaussian(num_samples, 50, 30.0) + _gaussian(num_samples, 95, -100.0)
+
+    peaks_info = get_trough_and_peak_idx(template, sampling_frequency, edge_exclusion_ms=0.1)
+
+    assert peaks_info["trough_index"] == 95
+    assert peaks_info["peak_before_index"] == 50
+    assert peaks_info["peak_after_index"] is None
+    assert peaks_info["peak_after_width_left"] is None
+    assert peaks_info["peak_after_half_width_left"] is None
+    assert np.isnan(get_peak_to_trough_duration(peaks_info, sampling_frequency))
+
+
+def test_no_edge_exclusion_detects_extrema():
+    """With edge_exclusion_ms=0 the search starts at sample 0 and must still detect the trough."""
+    sampling_frequency = 30_000.0
+    num_samples = 100
+    template = _gaussian(num_samples, 30, -100.0) + _gaussian(num_samples, 60, 40.0)
+
+    peaks_info = get_trough_and_peak_idx(template, sampling_frequency, edge_exclusion_ms=0)
+
+    assert peaks_info["trough_index"] == 30
+    assert peaks_info["peak_after_index"] == 60
+
+
+def test_compute_halfwidth_missing_extremum():
+    hw, left, right = _compute_halfwidth(np.zeros(10), None, 30_000.0)
+    assert np.isnan(hw)
+    assert left is None and right is None
 
 
 def test_different_params_template_metrics(small_sorting_analyzer):
